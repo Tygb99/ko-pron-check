@@ -104,6 +104,9 @@ The national language regulations do not say how to read decimals. The National 
 - Spacing is ignored and liaison is applied across word boundaries. Recognizers space words differently from the script, so the comparison cannot depend on spacing.
 - Vowel length (clauses 6 and 7) is not compared.
 - A transcript is only text. A `pass` means "the text is consistent with correct speech", not "the audio was proven correct".
+- Recognizers cannot tell 「점」 from 「쩜」. Whisper writes the digits (`2.2`). A Gemini model asked to write Hangul wrote 「점」 for all 16 clips with a known answer in one run and 「쩜」 for all 16 in the next. A 「점」 or 「쩜」 in a transcript is not evidence of what was said. See [How TTS engines read `.`](#how-tts-engines-read-).
+- `kopron prep` treats a short date such as `10.21` as a decimal (「십 쩜 이일」). Write dates out yourself (「시월 이십일일」).
+- Irregular month names (시월, 유월) do not match `10월`, `6월` in a transcript, and Latin spellings such as `abc99.com` or `Node.js` do not match a Hangul reading. These come out as `fail` and need a look.
 
 ## Getting transcripts
 
@@ -115,6 +118,48 @@ kopron batch scripts/ transcripts/
 ```
 
 It runs with `condition_on_previous_text=False`, so one misheard sentence does not leak into the next. It also drops segments that start after the last speech, where Whisper tends to invent words. The dropped text stays in `<name>-segments.json`. ffmpeg is required.
+
+## How TTS engines read `.`
+
+A test on 2026-10-21 with five engines: Gemini 3.8 Flash TTS on Vertex AI (voices Puck and Achernar), macOS `say` (Yuna), Edge TTS (`ko-KR-SunHiNeural`) and Qwen3-TTS 1.7B CustomVoice 8-bit (Sohee, local mlx). Eleven sentences were given in two forms, three takes each:
+
+- **A, plain text**: `응답까지 2.2초 걸렸어요.`
+- **B, written as spoken**: `kopron prep`, then numbers written out by hand: `응답까지 이 쩜 이 초 걸렸어요.`
+
+Each clip was transcribed twice, by Whisper large-v3-turbo (`tools/transcribe_mlx.py`) and by Gemini 3.8 Flash asked to write only Hangul. One sentence contains a domain name and is not shown here.
+
+**What the engines did with plain text (A).** 3/3 means three takes out of three. Readings marked * come only from the Gemini transcript, because Whisper writes them as digits.
+
+| Input | Gemini Puck | Gemini Achernar | macOS say Yuna | Edge SunHi | Qwen3 Sohee |
+| --- | --- | --- | --- | --- | --- |
+| `2.2초` `0.38초` `3.5%` | a dot word every time; 점 or 쩜 could not be decided | same as Puck | leans 쩜 | **쩜** (9/9, waveform match) | same as Puck |
+| `5.1.40` | 40 as 「사공」* 3/3 | 「사공」* 2/3 | a date: 「천구백사십 년 오월 일일」 | 「오 쩜 일 쩜 사십」 | 「사공」* 3/3 |
+| `v5.1.34` | 「일」 dropped 1/3, 34 as 「삼사」* 2/3 | 「삼사」* 2/3, 「삼백사십사」 1/3 | a date: 「천구백삼십사 년 오월 일일」 | as written | 「삼사」* 3/3, garbled 1/3 |
+| `10.21` (a date) | a decimal: 「십 쩜 이일」 3/3 | 「시월 …」 as a date; a wrong day 1/3, another 1/3* | could not be decided | a decimal | a decimal 3/3 |
+| sentence end `.` and `...` | not read, pause 0.4-0.7 s | not read, 0.3-0.6 s | not read, 0.2 s | not read, about 1 s | not read, 0.4-1.4 s |
+| `A.I.` `U.S.` | 에이아이, 유에스 | same | same | an extra syllable after 에이아이 3/3 | an extra syllable 1/3 |
+| `Node.js` | 노드제이에스 (dot not read) | same | same | same | same |
+
+`say` gives the same audio for the same text, so its three takes are one recording. For Edge, the plain-text audio was compared with audio made from 「이 쩜 이」 and 「이 점 이」 (DTW over log-mel frames); it matched the 쩜 version in all 9 takes. The same check could not separate the Gemini and Qwen takes, which vary from take to take.
+
+**Writing it as spoken (B) helped but did not remove errors.** Counts are out of 33 clips (11 sentences x 3 takes):
+
+| | Gemini Puck | Gemini Achernar | macOS say Yuna | Edge SunHi | Qwen3 Sohee |
+| --- | --- | --- | --- | --- | --- |
+| Both transcripts show an error | 1 | 2 | 0 | 0 | 1 |
+| Only one transcript shows one | 4 | 3 | 11 | 3 | 8 |
+
+With the text already spelled out, Achernar read 「이십일일」 as 「이십이일」 (2/3), Puck read it as 「이십일」 (1/3), and Qwen read 「브이」 as 「베이」/「뷔」 (1/3). So: run `kopron prep`, write numbers out, and still transcribe. The transcript cannot check 점 versus 쩜, so that part rests on writing 「쩜」 in the input.
+
+**Listen.** One clip per engine, the plain-text sentences (A) in order:
+
+| Engine | Clip |
+| --- | --- |
+| Gemini 3.8 Flash TTS, Puck | [gemini-puck.mp4](samples/dot-reading/gemini-puck.mp4) |
+| Gemini 3.8 Flash TTS, Achernar | [gemini-achernar.mp4](samples/dot-reading/gemini-achernar.mp4) |
+| macOS say, Yuna | [say-yuna.mp4](samples/dot-reading/say-yuna.mp4) |
+| Edge TTS, SunHi | [edge-sunhi.mp4](samples/dot-reading/edge-sunhi.mp4) |
+| Qwen3-TTS, Sohee | [qwen-sohee.mp4](samples/dot-reading/qwen-sohee.mp4) |
 
 ## Tests
 
