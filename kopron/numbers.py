@@ -14,6 +14,13 @@ LETTERS = {"a": ["에이"], "b": ["비"], "c": ["씨", "시"], "d": ["디"], "e"
            "t": ["티"], "u": ["유"], "v": ["브이"], "w": ["더블유"], "x": ["엑스"], "y": ["와이"],
            "z": ["지", "제트"]}
 SYMBOLS = {"%": ["퍼센트", "프로"]}
+# Country abbreviations said as the country name (U.S. -> 미국). Used only for upper-case or dotted tokens.
+ABBREVIATIONS = {"us": ["미국"], "usa": ["미국"], "uk": ["영국"]}
+# Domain endings said as a word rather than spelled (.com -> 닷컴, 쩜컴).
+TLD_WORDS = {"com": ["컴"], "net": ["넷"], "dev": ["데브"], "app": ["앱"]}
+TLDS = ("com", "net", "org", "kr", "io", "co", "ai", "dev", "app", "me")
+# Ways the dot in a web address is said: 닷 and 쩜 are both in use; 점 is flagged like a number dot.
+DOMAIN_DOTS = [("닷", False), ("쩜", False), ("점", True)]
 UNIT_WORDS = {"kb": ["킬로바이트", "킬로"], "mb": ["메가바이트", "메가"], "gb": ["기가바이트", "기가"],
               "tb": ["테라바이트", "테라"], "km": ["킬로미터", "킬로"], "kg": ["킬로그램", "킬로"],
               "cm": ["센티미터", "센티"], "mm": ["밀리미터", "밀리"], "ml": ["밀리리터", "밀리"]}
@@ -95,6 +102,8 @@ def number_readings(token: str) -> list[tuple[str, bool]]:
 
 
 def latin_readings(token: str) -> list[str]:
-    letters = [LETTERS.get(ch, [ch]) for ch in token.lower()]
+    bare = token.replace(".", "")
+    letters = [LETTERS.get(ch, [ch]) for ch in bare.lower()]
     spelled = ["".join(p) for p in itertools.islice(itertools.product(*letters), LIMIT)]
-    return UNIT_WORDS.get(token.lower(), []) + spelled
+    named = ABBREVIATIONS.get(bare.lower(), []) if (bare.isupper() or "." in token) else []
+    return named + UNIT_WORDS.get(bare.lower(), []) + TLD_WORDS.get(bare.lower(), []) + spelled

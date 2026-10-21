@@ -9,14 +9,19 @@ from difflib import SequenceMatcher
 from typing import Any
 
 from .g2p import LAX, WILD_UI, Syl, apply_rules, decompose, g2p
-from .numbers import (DOT_OK, DOT_WRONG, LIMIT, SYMBOLS, digitwise, latin_readings,
+from .numbers import (DOMAIN_DOTS, DOT_OK, DOT_WRONG, LIMIT, SYMBOLS, TLDS, digitwise, latin_readings,
                       number_readings, sino)
 
-TOKEN = re.compile(r"(?P<num>\d+(?:[.,]\d+)*)|(?P<lat>[A-Za-z]+)|(?P<sym>%)|(?P<han>[가-힣])|(?P<sp>.)", re.S)
+TOKEN = re.compile(r"(?P<num>\d+(?:[.,]\d+)*)"
+                   r"|(?P<lat>[A-Za-z](?:\.[A-Za-z](?![A-Za-z]))+\.?|[A-Za-z]+)"
+                   rf"|(?P<dom>(?<=[A-Za-z0-9])\.(?=(?i:{'|'.join(TLDS)})(?![A-Za-z])))"
+                   r"|(?P<sym>%)|(?P<han>[가-힣])|(?P<sp>.)", re.S)
 LEVELS = ["pass", "info", "warn", "fail"]
 MERGED_VOWELS = [{"ㅐ", "ㅔ"}, {"ㅒ", "ㅖ"}, {"ㅙ", "ㅚ", "ㅞ"}]
 WEAK_H_AFTER = {"", "ㄴ", "ㄹ", "ㅁ", "ㅇ"}
 JEOM_IN_DIGITS = re.compile(r"\d+\s*점\s*\d+")
+DOMAIN_DOT_SYLS = {t for t, _ in DOMAIN_DOTS}
+TLD_START = {"컴", "넷", "오", "케", "코", "씨"}
 
 REASONS = {
     "pron": ("표준 발음이 같음", "same standard pronunciation"),
@@ -27,6 +32,8 @@ REASONS = {
     "dot_jjeom": ("숫자 속 「.」을 「쩜」으로 읽음", "the dot inside a number was read 쩜"),
     "dot_jeom": ("숫자 속 「.」을 「점」으로 읽음. 「쩜」으로 읽어야 함",
                  "the dot inside a number was read 점; it should be 쩜"),
+    "dot_domain": ("주소 속 「.」을 「닷」이나 「쩜」으로 읽음(둘 다 인정)",
+                   "the dot in a web address read 닷 or 쩜; both are accepted"),
     "dot_unverified": ("받아쓰기가 숫자로 적어서 「.」을 점·쩜 중 무엇으로 읽었는지 알 수 없음",
                        "the transcript kept the digits, so 점 vs 쩜 cannot be told"),
     "ae_e": ("ㅐ/ㅔ(ㅒ/ㅖ, ㅙ/ㅚ/ㅞ) 차이. 표준 발음은 구별하지만 받아쓰기가 잘 못 가름. 귀로 확인",
@@ -44,6 +51,7 @@ class Unit:
     kind: str
     text: str
     syl: Syl | None = None
+    glued: bool = False  # digits written right after Latin letters, as in abc99
 
     def key(self):
         if self.syl is not None:
@@ -54,6 +62,7 @@ class Unit:
 def tokenize(text: str, weaken_h: bool = False) -> list[Unit]:
     units: list[Unit] = []
     word_start = True
+    prev_kind, prev_end = "", -1
     for m in TOKEN.finditer(unicodedata.normalize("NFC", text)):
         kind, tok = m.lastgroup or "sp", m.group()
         if kind == "han":
@@ -62,8 +71,10 @@ def tokenize(text: str, weaken_h: bool = False) -> list[Unit]:
         elif kind == "sp":
             word_start = True
         else:
-            units.append(Unit(kind.upper(), tok))
+            glued = kind == "num" and prev_kind == "lat" and prev_end == m.start()
+            units.append(Unit(kind.upper(), tok, glued=glued))
             word_start = True
+        prev_kind, prev_end = kind, m.end()
     if weaken_h:
         for prev, cur in zip(units, units[1:]):
             if prev.syl and cur.syl and cur.syl.c == "ㅎ" and prev.syl.f in WEAK_H_AFTER:
@@ -95,6 +106,10 @@ def _same_vowel(a: str, b: str) -> bool:
     return False
 
 
+def _before_tld(units: list[Unit], i: int) -> bool:
+    return i + 1 < len(units) and units[i + 1].kind == "H" and units[i + 1].text in TLD_START
+
+
 def _positions(r: list[Unit], h: list[Unit], i: int, j: int, n: int):
     level, reasons, rules = "pass", set(), set()
     for k in range(n):
@@ -105,6 +120,13 @@ def _positions(r: list[Unit], h: list[Unit], i: int, j: int, n: int):
             level = _worse(level, "warn"); reasons.add("dot_jeom"); continue
         if a.text == DOT_WRONG and b.text == DOT_OK:
             reasons.add("dot_jjeom"); continue
+        if (a.text != b.text and {a.text, b.text} <= DOMAIN_DOT_SYLS
+                and _before_tld(r, i + k) and _before_tld(h, j + k)):
+            if b.text == DOT_WRONG:
+                level = _worse(level, "warn"); reasons.add("dot_jeom")
+            else:
+                reasons.add("dot_domain")
+            continue
         rules |= sa.rules | sb.rules
         c_ok = sa.c == sb.c
         if not c_ok and LAX.get(sa.c, sa.c) == LAX.get(sb.c, sb.c) and (
@@ -129,7 +151,10 @@ def _expand(units: list[Unit], heard: bool = False) -> list[tuple[str, bool]]:
         elif u.kind == "H":
             choices.append([(u.text, False)])
         elif u.kind == "NUM":
-            choices.append(number_readings(u.text))
+            glued = u.glued and u.text.isdigit()
+            choices.append(number_readings(u.text) + ([(x, False) for x in digitwise(u.text)] if glued else []))
+        elif u.kind == "DOM":
+            choices.append(DOMAIN_DOTS)
         elif u.kind == "LAT":
             choices.append([(x, False) for x in latin_readings(u.text)] + [(u.text.lower(), False)])
         else:
@@ -208,9 +233,22 @@ def compare(ref: str, hyp: str) -> dict[str, Any]:
     matcher = SequenceMatcher(None, [u.key() for u in r], [u.key() for u in h], autojunk=False)
     items = []
     last_pron = None
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+    ops = matcher.get_opcodes()
+    idx = -1
+    while idx + 1 < len(ops):
+        idx += 1
+        tag, i1, i2, j1, j2 = ops[idx]
         if tag != "equal":
             item = _classify(r, h, ra, ha, i1, i2, j1, j2)
+            if item["level"] == "fail" and any(u.kind != "H" for u in r[i1:i2] + h[j1:j2]):
+                # Digits and Latin letters break the Hangul run, so liaison differs on the two sides
+                # (닷컴이에요 [다커미에요] vs com이에요) and the matcher can split the span in the wrong
+                # place. Try the span joined with the next few opcodes before calling it a failure.
+                for end in range(idx + 1, min(idx + 5, len(ops))):
+                    merged = _classify(r, h, ra, ha, i1, ops[end][2], j1, ops[end][4])
+                    if merged["level"] != "fail":
+                        item, idx = merged, end
+                        break
             if item["level"] == "fail" and last_pron and last_pron[:3] == (len(items) - 1, i1, j1):
                 items.pop()
                 item = _item("fail", r[last_pron[3]:i2], h[last_pron[4]:j2], set(item["reasons"]))
@@ -248,21 +286,27 @@ DOTTED = re.compile(r"(?<![\d.])([vV]?)(\d+)((?:\.\d+)+)(?!\.?\d)")
 def prep(text: str, keep_digits: bool = False) -> tuple[str, list[str]]:
     """Rewrite dots inside numbers so a TTS engine says 쩜.
 
-    '2.5' -> '이 쩜 오', 'v1.2' -> '브이 일 쩜 이' (keep_digits: '2쩜5').
-    Dates such as 2026.10.19 are left alone and returned in the second value.
+    Digits after the dot are read one by one: '3.14' -> '삼 쩜 일사', '0.05' -> '영 쩜 영오'.
+    Versions (two or more dots, or a leading v) read every part after the first digit by
+    digit with 0 as 공: '5.1.40' -> '오 쩜 일 쩜 사공', 'v5.1.34' -> '브이 오 쩜 일 쩜 삼사'.
+    keep_digits gives '2쩜5'. Dates such as 2026.10.19 and short dates such as 10.21
+    (two-digit month, two-digit day, no % after) are left alone and returned in the second value.
     """
     skipped: list[str] = []
 
     def repl(m: re.Match[str]) -> str:
         prefix, head, rest = m.groups()
         parts = [head] + rest[1:].split(".")
-        if not prefix and len(parts) == 3 and len(head) == 4:
+        long_date = len(parts) == 3 and len(head) == 4
+        short_date = (len(parts) == 2 and len(head) == 2 and len(parts[1]) == 2 and 1 <= int(head) <= 12
+                      and 1 <= int(parts[1]) <= 31 and not m.string[m.end():].lstrip().startswith("%"))
+        if not prefix and (long_date or short_date):
             skipped.append(m.group())
             return m.group()
         if keep_digits:
             return prefix + DOT_OK.join(parts)
         version = bool(prefix) or len(parts) > 2
-        words = [sino(int(head))[0]] + [sino(int(p))[0] if version else digitwise(p)[0] for p in parts[1:]]
+        words = [sino(int(head))[0]] + [digitwise(p)[1 if version else 0] for p in parts[1:]]
         return ("브이 " if prefix else "") + f" {DOT_OK} ".join(words)
 
     return DOTTED.sub(repl, text), skipped

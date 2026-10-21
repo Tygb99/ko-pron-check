@@ -109,14 +109,60 @@ class Flagged(unittest.TestCase):
         self.assertEqual(levels("여섯 개", "7개")[0], "fail")
 
 
+class Readings(unittest.TestCase):
+    def test_version_parts_digit_by_digit(self):
+        self.assertEqual(levels("오 쩜 일 쩜 사공 판", "5.1.40 판")[0], "pass")
+        self.assertEqual(levels("5.1.40 판", "오 쩜 일 쩜 사공 판")[0], "pass")
+        self.assertEqual(levels("오 쩜 일 쩜 사공 판", "오 쩜 일 쩜 사십 판")[0], "fail")
+        self.assertEqual(levels("브이 오 쩜 일 쩜 삼사에서", "V5.1.34에서")[0], "pass")
+
+    def test_country_abbreviation(self):
+        self.assertEqual(levels("미국 회사가", "U.S. 회사가")[0], "pass")
+        self.assertEqual(levels("U.S. 회사가", "미국 회사가")[0], "pass")
+        self.assertEqual(levels("U.S. 회사가", "유에스 회사가")[0], "pass")
+        self.assertEqual(levels("미국 회사가", "유에스 회사가")[0], "fail")
+
+    def test_dotted_letters_stay_letters(self):
+        self.assertEqual(levels("에이아이 도구", "A.I. 도구")[0], "pass")
+
+    def test_web_address_dot_dat_or_jjeom(self):
+        self.assertEqual(levels("에이비씨 구구 닷컴", "에이비씨 구구 쩜컴")[0], "pass")
+        self.assertEqual(levels("에이비씨 구구 쩜컴", "에이비씨 구구 닷컴")[0], "pass")
+        self.assertEqual(levels("에이비씨 구구 닷컴", "abc99.com")[0], "pass")
+        self.assertEqual(levels("abc99.com", "에이비씨 구구 쩜컴")[0], "pass")
+        self.assertEqual(levels("주소는 에이비씨 구구 닷컴이에요.", "주소는 abc99.com이에요.")[0], "pass")
+        self.assertEqual(levels("주소는 에이비씨 구구 닷컴이에요.", "주소는 abc98.com이에요.")[0], "fail")
+
+    def test_web_address_dot_as_jeom_warns(self):
+        self.assertEqual(levels("에이비씨 구구 닷컴", "에이비씨 구구 점컴")[0], "warn")
+        self.assertEqual(levels("abc99.com", "에이비씨 구구 점컴")[0], "warn")
+
+    def test_dat_outside_an_address_is_still_a_word(self):
+        self.assertEqual(levels("닷새", "쩜새")[0], "fail")
+
+
 class Prep(unittest.TestCase):
     def test_decimal(self):
         self.assertEqual(prep("2.5배")[0], "이 쩜 오배")
         self.assertEqual(prep("3.14")[0], "삼 쩜 일사")
 
+    def test_decimal_digits_one_by_one_with_yeong(self):
+        self.assertEqual(prep("0.38초")[0], "영 쩜 삼팔초")
+        self.assertEqual(prep("3.05")[0], "삼 쩜 영오")
+        self.assertEqual(prep("12.5%")[0], "십이 쩜 오%")
+
     def test_version(self):
         self.assertEqual(prep("v1.2")[0], "브이 일 쩜 이")
-        self.assertEqual(prep("1.10.3")[0], "일 쩜 십 쩜 삼")
+        self.assertEqual(prep("1.10.3")[0], "일 쩜 일공 쩜 삼")
+
+    def test_version_parts_after_the_first_digit_by_digit(self):
+        self.assertEqual(prep("5.1.40 판")[0], "오 쩜 일 쩜 사공 판")
+        self.assertEqual(prep("v5.1.34에서")[0], "브이 오 쩜 일 쩜 삼사에서")
+        self.assertEqual(prep("10.2.1")[0], "십 쩜 이 쩜 일")
+
+    def test_short_dates_are_left_alone(self):
+        self.assertEqual(prep("발표는 10.21에"), ("발표는 10.21에", ["10.21"]))
+        self.assertEqual(prep("10.25%")[0], "십 쩜 이오%")
 
     def test_keep_digits(self):
         self.assertEqual(prep("2.5배", keep_digits=True)[0], "2쩜5배")
